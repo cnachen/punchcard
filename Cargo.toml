@@ -1,0 +1,15 @@
+[package]
+name = "punchit"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Convert source text to IBM 5081 (80-column) punch cards encoded with IBM 029"
+repository = "https://github.com/yourname/punchit-rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+thiserror = "1"
+
+[dev-dependencies]
+pretty_assertions = "1"
