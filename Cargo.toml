@@ -1,10 +1,15 @@
 [package]
-name = "punchit"
+name = "punchcard"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "Convert source text to IBM 5081 (80-column) punch cards encoded with IBM 029"
-repository = "https://github.com/yourname/punchit-rs"
+description = "IBM 80-column punch card emulator for modern workflows"
+repository = "https://github.com/cnachen/punchcard"
+authors = ["cnachen <cnachencli@live.cn>"]
+readme = "README.md"
+documentation = "https://docs.rs/punchcard"
+keywords = ["punchcard", "IBM", "80-column", "emulator"]
+categories = ["text-processing", "emulation"]
 
 [dependencies]
 anyhow = "1"
@@ -13,3 +18,6 @@ thiserror = "1"
 
 [dev-dependencies]
 pretty_assertions = "1"
+
+[profile.release]
+opt-level = 3

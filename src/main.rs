@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{ArgGroup, Parser};
-use punchit::{Ibm029Encoder, PunchEncoding, RenderStyle, encode_text_to_deck};
+use punchcard::{Ibm029Encoder, PunchEncoding, RenderStyle, encode_text_to_deck};
 use std::fs;
 use std::io::{self, Read};
 

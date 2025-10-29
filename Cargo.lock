@@ -148,7 +148,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "punchit"
+name = "punchcard"
 version = "0.1.0"
 dependencies = [
  "anyhow",

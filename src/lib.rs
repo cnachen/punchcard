@@ -1,8 +1,8 @@
 mod encoding;
-mod punchcard;
+mod punchcards;
 
 pub use encoding::{Ibm029Encoder, PunchEncoding, ValidChar};
-pub use punchcard::{CardDeck, PunchCard, RenderStyle};
+pub use punchcards::{CardDeck, PunchCard, RenderStyle};
 
 use anyhow::Result;
 
