@@ -3,8 +3,6 @@ use thiserror::Error;
 
 /// There are 12 rows in total: 12, 11, and 0..9.
 /// Each column’s punched holes are represented as a bitmask in a `u16`.
-/// Bit meaning (LSB → MSB): bit0 = row 0, bit1 = row 1, ..., bit9 = row 9, bit10 = row 11, bit11 = row 12.
-/// This layout allows easy row-by-row rendering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CellMask(pub u16);
 
@@ -21,6 +19,7 @@ impl std::ops::BitOr for CellMask {
     }
 }
 
+/// Trait implemented by encoding adapters capable of mapping characters into punch-card bitmasks.
 pub trait PunchEncoding {
     fn name(&self) -> &'static str;
     fn encode_char(&self, ch: char) -> Result<CellMask, EncodeError>;

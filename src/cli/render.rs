@@ -3,9 +3,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::{Args, Subcommand};
-use punchcard::{render_card_image, ImageRenderOptions, Ibm029Encoder};
+use punchcard::{Ibm029Encoder, ImageRenderOptions, render_card_image};
 
 use crate::cli::utils::load_deck;
 
@@ -108,7 +108,10 @@ fn image(args: RenderImageArgs) -> Result<()> {
         }
     } else {
         fs::create_dir_all(&output_path).with_context(|| {
-            format!("failed to create output directory {}", output_path.display())
+            format!(
+                "failed to create output directory {}",
+                output_path.display()
+            )
         })?;
     }
 

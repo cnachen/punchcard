@@ -6,14 +6,14 @@ use imageproc::drawing::{
 };
 use imageproc::rect::Rect;
 
-use crate::punchcards::PunchCard;
+use crate::core::punchcards::PunchCard;
 
 const CARD_WIDTH_IN: f32 = 7.375;
 const CARD_HEIGHT_IN: f32 = 3.25;
 const A4_WIDTH_IN: f32 = 8.27;
 const A4_HEIGHT_IN: f32 = 11.69;
-const GLYPH_WIDTH: usize = 5;
-const GLYPH_HEIGHT: usize = 7;
+pub const GLYPH_WIDTH: usize = 5;
+pub const GLYPH_HEIGHT: usize = 7;
 const ROW_BIT_ORDER: [usize; 12] = [11, 10, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
 /// Visual styles for PNG rendering.
@@ -77,16 +77,16 @@ pub fn render_card_image(card: &PunchCard, options: &ImageRenderOptions) -> Resu
     let border_rect = Rect::at(0, 0).of_size(card_width_px, card_height_px);
     draw_hollow_rect_mut(&mut card_img, border_rect, palette.border);
 
+    let col_count = card.columns().len();
     let col_spacing =
-        (card_width_px as f32 - 2.0 * margin_x as f32).max(1.0) / (card.cols.len() as f32 - 1.0);
+        (card_width_px as f32 - 2.0 * margin_x as f32).max(1.0) / (col_count as f32 - 1.0);
     let row_spacing = (card_height_px as f32 - (margin_top + margin_bottom) as f32).max(1.0)
         / (ROW_BIT_ORDER.len() as f32 - 1.0);
     let hole_radius = (col_spacing.min(row_spacing) * 0.2).round() as i32;
     let hole_radius = hole_radius.max(2);
 
-    // Draw guide lines every 10 columns for retro touch.
-    for col in 0..=card.cols.len() {
-        if col == 0 || col == card.cols.len() || col % 10 == 0 {
+    for col in 0..=col_count {
+        if col == 0 || col == col_count || col % 10 == 0 {
             let x = margin_x as f32 + col as f32 * col_spacing;
             draw_line_segment_mut(
                 &mut card_img,
@@ -97,13 +97,11 @@ pub fn render_card_image(card: &PunchCard, options: &ImageRenderOptions) -> Resu
         }
     }
 
-    // Draw punched holes.
-    for (col_idx, cell) in card.cols.iter().enumerate() {
+    for (col_idx, cell) in card.columns().iter().enumerate() {
         let center_x = (margin_x as f32 + col_idx as f32 * col_spacing).round() as i32;
         for (row_idx, bit) in ROW_BIT_ORDER.iter().enumerate() {
             if (cell.0 >> bit) & 1 == 1 {
-                let center_y =
-                    (margin_top as f32 + row_idx as f32 * row_spacing).round() as i32;
+                let center_y = (margin_top as f32 + row_idx as f32 * row_spacing).round() as i32;
                 draw_filled_circle_mut(
                     &mut card_img,
                     (center_x, center_y),
@@ -114,15 +112,21 @@ pub fn render_card_image(card: &PunchCard, options: &ImageRenderOptions) -> Resu
         }
     }
 
-    // Draw interpreter text line.
     let scale = (dpi_f / 120.0).ceil() as u32;
     let scale = scale.max(2);
     let glyph_half_width = ((GLYPH_WIDTH as u32 * scale) as f32 / 2.0).round() as i32;
     let text_baseline = (margin_top as f32 - row_spacing * 0.85).round() as i32;
-    for (col_idx, ch) in card.raw_text.chars().enumerate() {
+    for (col_idx, ch) in card.text().iter().enumerate() {
         let center_x = (margin_x as f32 + col_idx as f32 * col_spacing).round() as i32;
         let glyph_x = center_x - glyph_half_width;
-        draw_glyph(&mut card_img, glyph_x, text_baseline, ch, palette.text, scale);
+        draw_glyph(
+            &mut card_img,
+            glyph_x,
+            text_baseline,
+            *ch,
+            palette.text,
+            scale,
+        );
     }
 
     let final_image = match options.layout {
@@ -134,12 +138,7 @@ pub fn render_card_image(card: &PunchCard, options: &ImageRenderOptions) -> Resu
                 ImageBuffer::from_pixel(page_width, page_height, palette.page_bg.clone());
             let offset_x = ((page_width as i32 - card_width_px as i32) / 2).max(0);
             let offset_y = ((page_height as i32 - card_height_px as i32) / 2).max(0);
-            overlay(
-                &mut page,
-                &card_img,
-                offset_x as i64,
-                offset_y as i64,
-            );
+            overlay(&mut page, &card_img, offset_x as i64, offset_y as i64);
             DynamicImage::ImageRgba8(page)
         }
     };
@@ -208,21 +207,12 @@ fn draw_glyph(
     scale: u32,
 ) {
     let pattern = glyph_pattern(ch);
-    let scaled_width = (GLYPH_WIDTH as u32 * scale) as i32;
-    let scaled_height = (GLYPH_HEIGHT as u32 * scale) as i32;
-    if scaled_width <= 0 || scaled_height <= 0 {
-        return;
-    }
     for (row, bits) in pattern.iter().enumerate() {
         for col in 0..GLYPH_WIDTH {
             if bits & (1 << (GLYPH_WIDTH - 1 - col)) != 0 {
                 let px = x + (col as i32 * scale as i32);
                 let py = y + (row as i32 * scale as i32);
-                draw_filled_rect_mut(
-                    image,
-                    Rect::at(px, py).of_size(scale, scale),
-                    color,
-                );
+                draw_filled_rect_mut(image, Rect::at(px, py).of_size(scale, scale), color);
             }
         }
     }

@@ -1,18 +1,16 @@
-//! Core library for punch-card encoding and deck management.
+//! Core library entrypoint exporting domain types and rendering utilities.
 
-mod deck;
-mod encoding;
-mod punchcards;
-mod templates;
-mod graphics;
+pub mod core;
+pub mod image;
 
-pub use deck::{
-    AuditEvent, CardMeta, CardRecord, CardType, ColumnRange, Deck, DeckHeader, EncodingKind,
+pub use core::{
+    AuditEvent, CardDeck, CardMeta, CardRecord, CardType, ColumnRange, Deck, DeckHeader,
+    EncodingKind, Ibm029Encoder, PunchCard, PunchEncoding, RenderStyle, Template, TemplateRegistry,
+    ValidChar,
 };
-pub use encoding::{Ibm029Encoder, PunchEncoding, ValidChar};
-pub use punchcards::{CardDeck, PunchCard, RenderStyle};
-pub use templates::{Template, TemplateRegistry};
-pub use graphics::{CardImageStyle, PageLayout, ImageRenderOptions, render_card_image};
+pub use image::{
+    CardImageStyle, GLYPH_HEIGHT, GLYPH_WIDTH, ImageRenderOptions, PageLayout, render_card_image,
+};
 
 use anyhow::Result;
 

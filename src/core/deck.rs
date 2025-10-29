@@ -1,4 +1,4 @@
-use crate::encoding::{EncodeError, PunchEncoding};
+use crate::core::encoding::{EncodeError, PunchEncoding};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -36,7 +36,7 @@ impl ColumnRange {
     }
 }
 
-/// Label for the intent or provenance of a card.
+/// High-level classification for cards stored in a deck.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CardType {
@@ -121,13 +121,13 @@ impl CardRecord {
         self.seq = seq;
     }
 
-    /// Materialize a [`PunchCard`](crate::punchcards::PunchCard) representation using the supplied encoder.
+    /// Materialize a [`PunchCard`](crate::core::punchcards::PunchCard) representation using the supplied encoder.
     pub fn to_punch_card<E: PunchEncoding + ?Sized>(
         &self,
         encoder: &E,
-    ) -> Result<crate::punchcards::PunchCard, EncodeError> {
+    ) -> Result<crate::core::punchcards::PunchCard, EncodeError> {
         let text = self.text.as_deref().unwrap_or_else(|| "");
-        crate::punchcards::PunchCard::from_str(encoder, text)
+        crate::core::punchcards::PunchCard::from_str(encoder, text)
     }
 }
 
@@ -392,13 +392,13 @@ impl Deck {
     pub fn to_punch_deck(
         &self,
         encoder: &dyn PunchEncoding,
-    ) -> Result<crate::punchcards::CardDeck, EncodeError> {
+    ) -> Result<crate::core::punchcards::CardDeck, EncodeError> {
         let mut cards = Vec::with_capacity(self.cards.len());
         for card in &self.cards {
             let rendered = card.to_punch_card(encoder)?;
             cards.push(rendered);
         }
-        Ok(crate::punchcards::CardDeck { cards })
+        Ok(crate::core::punchcards::CardDeck { cards })
     }
 
     /// Merge cards and history from another deck after validating compatibility.

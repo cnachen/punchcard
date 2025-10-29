@@ -1,4 +1,4 @@
-use crate::deck::{CardRecord, CardType, ColumnRange, EncodingKind};
+use crate::core::deck::{CardRecord, CardType, ColumnRange, EncodingKind};
 use anyhow::{Result, anyhow};
 
 /// Describes a language or workload-specific punch card layout.
