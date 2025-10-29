@@ -1,7 +1,10 @@
+//! Core library for punch-card encoding and deck management.
+
 mod deck;
 mod encoding;
 mod punchcards;
 mod templates;
+mod graphics;
 
 pub use deck::{
     AuditEvent, CardMeta, CardRecord, CardType, ColumnRange, Deck, DeckHeader, EncodingKind,
@@ -9,6 +12,7 @@ pub use deck::{
 pub use encoding::{Ibm029Encoder, PunchEncoding, ValidChar};
 pub use punchcards::{CardDeck, PunchCard, RenderStyle};
 pub use templates::{Template, TemplateRegistry};
+pub use graphics::{CardImageStyle, PageLayout, ImageRenderOptions, render_card_image};
 
 use anyhow::Result;
 

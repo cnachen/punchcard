@@ -1,6 +1,7 @@
 use crate::deck::{CardRecord, CardType, ColumnRange, EncodingKind};
 use anyhow::{Result, anyhow};
 
+/// Describes a language or workload-specific punch card layout.
 #[derive(Debug, Clone)]
 pub struct Template {
     pub name: &'static str,
@@ -9,6 +10,7 @@ pub struct Template {
     pub default_type: CardType,
 }
 
+/// Column constraint metadata for a [`Template`].
 #[derive(Debug, Clone)]
 pub struct TemplateColumn {
     pub range: ColumnRange,
@@ -16,18 +18,22 @@ pub struct TemplateColumn {
 }
 
 impl Template {
+    /// Apply the template to raw text, returning a [`CardRecord`] with column padding and defaults.
     pub fn apply(&self, text: &str) -> Result<CardRecord> {
         CardRecord::from_text(text, EncodingKind::Hollerith, self.default_type.clone())
     }
 }
 
+/// Registry of built-in templates recognised by the CLI.
 pub struct TemplateRegistry;
 
 impl TemplateRegistry {
+    /// Return the set of available templates.
     pub fn list() -> Vec<&'static Template> {
         vec![&FORTRAN_IV, &COBOL, &JCL_JOB, &ASSEMBLER_H]
     }
 
+    /// Resolve a template by name (case-insensitive).
     pub fn get(name: &str) -> Result<&'static Template> {
         let lname = name.to_ascii_lowercase();
         for tpl in Self::list() {

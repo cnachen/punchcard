@@ -72,16 +72,6 @@ pub enum EncodingKind {
     Ebcdic,
 }
 
-impl EncodingKind {
-    pub fn default_encoder(&self) -> Box<dyn PunchEncoding> {
-        match self {
-            EncodingKind::Hollerith | EncodingKind::Ascii | EncodingKind::Ebcdic => {
-                Box::new(crate::encoding::Ibm029Encoder::new())
-            }
-        }
-    }
-}
-
 impl Default for EncodingKind {
     fn default() -> Self {
         EncodingKind::Hollerith
@@ -107,6 +97,7 @@ pub struct CardRecord {
 }
 
 impl CardRecord {
+    /// Construct a card from user-provided text, padding to 80 columns and retaining metadata.
     pub fn from_text<S: Into<String>>(
         text: S,
         encoding: EncodingKind,
@@ -125,14 +116,12 @@ impl CardRecord {
         })
     }
 
+    /// Update the optional sequence number attached to the card.
     pub fn ensure_seq(&mut self, seq: Option<usize>) {
         self.seq = seq;
     }
 
-    pub fn to_text(&self) -> Option<&str> {
-        self.text.as_deref()
-    }
-
+    /// Materialize a [`PunchCard`](crate::punchcards::PunchCard) representation using the supplied encoder.
     pub fn to_punch_card<E: PunchEncoding + ?Sized>(
         &self,
         encoder: &E,
@@ -160,6 +149,7 @@ pub struct DeckHeader {
 }
 
 impl DeckHeader {
+    /// Create a new header with optional language/template metadata.
     pub fn new(
         language: Option<String>,
         template: Option<String>,
@@ -186,6 +176,7 @@ pub struct AuditEvent {
 }
 
 impl AuditEvent {
+    /// Create an audit entry using the OS user (if available).
     pub fn new<S: Into<String>>(action: S) -> Self {
         let actor = std::env::var("USER")
             .or_else(|_| std::env::var("USERNAME"))
@@ -207,6 +198,7 @@ pub struct Deck {
 }
 
 impl Deck {
+    /// Create an empty deck using the provided header metadata.
     pub fn new(header: DeckHeader) -> Self {
         Self {
             header,
@@ -285,6 +277,7 @@ impl Deck {
         Ok(())
     }
 
+    /// Append a card to the deck, enforcing protected-column constraints.
     pub fn append_card(&mut self, card: CardRecord) -> Result<()> {
         self.enforce_protection(None, &card)?;
         self.cards.push(card);
@@ -304,6 +297,7 @@ impl Deck {
         Ok(())
     }
 
+    /// Replace a card at the specified zero-based index.
     pub fn replace_card(&mut self, index: usize, card: CardRecord) -> Result<()> {
         if index >= self.cards.len() {
             return Err(anyhow!(
@@ -318,6 +312,7 @@ impl Deck {
         Ok(())
     }
 
+    /// Create a new deck from a contiguous range of cards.
     pub fn slice(&self, range: std::ops::Range<usize>) -> Result<Self> {
         if range.end > self.cards.len() {
             return Err(anyhow!(
@@ -331,6 +326,7 @@ impl Deck {
         Ok(new)
     }
 
+    /// Populate sequence numbers and update the 73–80 columns accordingly.
     pub fn number_sequence(&mut self, start: usize, step: usize) {
         let mut value = start;
         for card in &mut self.cards {
@@ -363,6 +359,7 @@ impl Deck {
         });
     }
 
+    /// Compute a SHA-256 hash representing deck contents.
     pub fn hash(&self) -> Result<String> {
         let mut hasher = Sha256::new();
         let mut buffer = Vec::new();
@@ -379,10 +376,12 @@ impl Deck {
         Ok(format!("{digest:02x}"))
     }
 
+    /// Append an audit log entry.
     pub fn log_action<S: Into<String>>(&mut self, action: S) {
         self.header.history.push(AuditEvent::new(action));
     }
 
+    /// Render cards as 80-column strings, padding blanks for empty cards.
     pub fn as_text(&self) -> Vec<String> {
         self.cards
             .iter()
@@ -402,6 +401,7 @@ impl Deck {
         Ok(crate::punchcards::CardDeck { cards })
     }
 
+    /// Merge cards and history from another deck after validating compatibility.
     pub fn merge_from(&mut self, other: &Deck) -> Result<()> {
         if self.header.protected_cols != other.header.protected_cols {
             return Err(anyhow!(
@@ -421,6 +421,7 @@ impl Deck {
         Ok(())
     }
 
+    /// Construct a new deck from an arbitrary set of card indices.
     pub fn slice_indices(&self, indices: &[usize]) -> Result<Self> {
         let mut new = Self::new(self.header.clone());
         for &idx in indices {
@@ -436,6 +437,7 @@ impl Deck {
         Ok(new)
     }
 
+    /// Guard protected columns from modification to preserve sequence numbers or constants.
     fn enforce_protection(
         &self,
         original: Option<&CardRecord>,
