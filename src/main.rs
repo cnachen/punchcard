@@ -77,6 +77,10 @@ enum DeckCommand {
     Export(DeckExportArgs),
     /// Show deck metadata summary.
     Info(DeckInfoArgs),
+    /// Merge multiple deck files into a new deck.
+    Merge(DeckMergeArgs),
+    /// Slice a deck by card indices or ranges.
+    Slice(DeckSliceArgs),
 }
 
 #[derive(Args, Debug)]
@@ -142,10 +146,34 @@ struct DeckInfoArgs {
     deck: PathBuf,
 }
 
+#[derive(Args, Debug)]
+struct DeckMergeArgs {
+    /// Input deck files to merge.
+    #[arg(required = true)]
+    inputs: Vec<PathBuf>,
+    /// Output deck file.
+    #[arg(short = 'o', long)]
+    out: PathBuf,
+}
+
+#[derive(Args, Debug)]
+struct DeckSliceArgs {
+    /// Source deck file.
+    deck: PathBuf,
+    /// Range expression, e.g. 1..10,25,30..$
+    #[arg(long)]
+    range: String,
+    /// Output deck file.
+    #[arg(short = 'o', long)]
+    out: PathBuf,
+}
+
 #[derive(Subcommand, Debug)]
 enum CardCommand {
     /// Append or insert cards using raw text.
     Add(CardAddArgs),
+    /// Type cards interactively from stdin.
+    Type(CardTypeArgs),
     /// Replace an existing card by index.
     Replace(CardReplaceArgs),
     /// Show a card with metadata.
@@ -178,6 +206,23 @@ struct CardAddArgs {
     /// Insert at 1-based position (defaults to append).
     #[arg(long)]
     position: Option<usize>,
+}
+
+#[derive(Args, Debug)]
+struct CardTypeArgs {
+    deck: PathBuf,
+    /// Apply template defaults during typing.
+    #[arg(long)]
+    template: Option<String>,
+    /// Explicit card type.
+    #[arg(long = "type", default_value_t = CardTypeArg::Code, value_enum)]
+    card_type: CardTypeArg,
+    /// Optional human note applied to all typed cards.
+    #[arg(long)]
+    note: Option<String>,
+    /// Optional color hint.
+    #[arg(long)]
+    color: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -246,6 +291,8 @@ struct SeqSortArgs {
 enum RenderCommand {
     /// Produce interpreter-style listing.
     Interpret(RenderInterpretArgs),
+    /// Emit a card-by-card textual listing.
+    Listing(RenderListingArgs),
 }
 
 #[derive(Args, Debug)]
@@ -255,6 +302,17 @@ struct RenderInterpretArgs {
     #[arg(short = 'o', long)]
     out: Option<PathBuf>,
     /// Rendering style.
+    #[arg(long, default_value_t = RenderStyleArg::AsciiX, value_enum)]
+    style: RenderStyleArg,
+}
+
+#[derive(Args, Debug)]
+struct RenderListingArgs {
+    deck: PathBuf,
+    /// Output file (`-` for stdout)
+    #[arg(short = 'o', long)]
+    out: Option<PathBuf>,
+    /// Rendering style for punch visualization.
     #[arg(long, default_value_t = RenderStyleArg::AsciiX, value_enum)]
     style: RenderStyleArg,
 }
@@ -328,6 +386,12 @@ struct VerifyPassArgs {
     /// Text file to compare (`-` for stdin)
     #[arg(long = "from")]
     from: Option<PathBuf>,
+    /// Treat any difference as an error.
+    #[arg(long)]
+    strict: bool,
+    /// Ignore specified column ranges during comparison.
+    #[arg(long = "mask", value_parser = parse_column_range)]
+    mask: Vec<ColumnRange>,
 }
 
 #[derive(Args, Debug)]
@@ -429,7 +493,7 @@ fn handle_deck(command: DeckCommand) -> Result<()> {
                             args.source.display()
                         )
                     })?;
-                deck.append_card(record);
+                deck.append_card(record)?;
             }
             deck.log_action(format!(
                 "import from {} as {:?}",
@@ -487,6 +551,46 @@ fn handle_deck(command: DeckCommand) -> Result<()> {
             }
             println!("History entries: {}", deck.header.history.len());
         }
+        DeckCommand::Merge(args) => {
+            if args.inputs.len() < 2 {
+                return Err(anyhow!("merge requires at least two input decks"));
+            }
+            let mut merged: Option<Deck> = None;
+            for input in &args.inputs {
+                let deck = load_deck(input)?;
+                merged = Some(match merged {
+                    None => deck,
+                    Some(mut acc) => {
+                        acc.merge_from(&deck)?;
+                        acc
+                    }
+                });
+            }
+            let mut result = merged.expect("at least one deck");
+            result.log_action(format!(
+                "merge {} decks into {}",
+                args.inputs.len(),
+                args.out.display()
+            ));
+            result.save(&args.out)?;
+            println!(
+                "Merged {} cards into {}",
+                result.cards.len(),
+                args.out.display()
+            );
+        }
+        DeckCommand::Slice(args) => {
+            let source = load_deck(&args.deck)?;
+            let indexes = parse_range_expression(&args.range, source.cards.len())?;
+            let mut sliced = source.slice_indices(&indexes)?;
+            sliced.log_action(format!("slice {} -> {}", args.range, args.out.display()));
+            sliced.save(&args.out)?;
+            println!(
+                "Sliced {} cards into {}",
+                sliced.cards.len(),
+                args.out.display()
+            );
+        }
     }
     Ok(())
 }
@@ -519,12 +623,40 @@ fn handle_card(command: CardCommand) -> Result<()> {
                     let idx = pos.saturating_sub(1) + i;
                     deck.insert_card(idx, record)?;
                 } else {
-                    deck.append_card(record);
+                    deck.append_card(record)?;
                 }
             }
             deck.log_action("card add");
             deck.save(&args.deck)?;
             println!("Added {} card(s) into {}", lines.len(), args.deck.display());
+        }
+        CardCommand::Type(args) => {
+            let mut deck = load_deck(&args.deck)?;
+            let template = match &args.template {
+                Some(name) => Some(
+                    TemplateRegistry::get(name)
+                        .with_context(|| format!("template '{}' not found", name))?,
+                ),
+                None => None,
+            };
+            let buffer = read_stdin()?;
+            let lines = split_lines_fixed(&buffer);
+            let chosen_type: CardType = args.card_type.into();
+            for line in lines {
+                let mut record = if let Some(tpl) = template {
+                    tpl.apply(&line)?
+                } else {
+                    CardRecord::from_text(&line, EncodingKind::Hollerith, chosen_type.clone())?
+                };
+                record.meta = CardMeta {
+                    note: args.note.clone(),
+                    color: args.color.clone(),
+                };
+                deck.append_card(record)?;
+            }
+            deck.log_action("card type");
+            deck.save(&args.deck)?;
+            println!("Typed cards appended to {}", args.deck.display());
         }
         CardCommand::Replace(args) => {
             let mut deck = load_deck(&args.deck)?;
@@ -592,7 +724,7 @@ fn handle_card(command: CardCommand) -> Result<()> {
                 note: args.note.clone().or_else(|| Some("patch card".to_string())),
                 color: Some("amber".to_string()),
             };
-            deck.append_card(record);
+            deck.append_card(record)?;
             deck.log_action("card patch");
             deck.save(&args.deck)?;
             println!("Appended patch card to {}", args.deck.display());
@@ -648,6 +780,52 @@ fn handle_render(command: RenderCommand) -> Result<()> {
                 write_output(&path, &output)?;
                 println!(
                     "Wrote interpreted listing for {} to {}",
+                    args.deck.display(),
+                    path.display()
+                );
+            } else {
+                print!("{}", output);
+            }
+        }
+        RenderCommand::Listing(args) => {
+            let deck = load_deck(&args.deck)?;
+            let encoder = Ibm029Encoder::new();
+            let punch_deck = deck
+                .to_punch_deck(&encoder)
+                .context("failed to render deck with IBM029 encoder")?;
+            let mut output = String::new();
+            for (idx, (record, card)) in deck.cards.iter().zip(punch_deck.cards.iter()).enumerate()
+            {
+                if idx > 0 {
+                    output.push_str("\n\n");
+                }
+                let label = record
+                    .seq
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "(none)".to_string());
+                output.push_str(&format!(
+                    "Card {:>4} | seq {} | type {:?}\n",
+                    idx + 1,
+                    label,
+                    record.card_type
+                ));
+                if let Some(note) = record.meta.note.as_ref() {
+                    output.push_str(&format!("Note: {}\n", note));
+                }
+                if let Some(color) = record.meta.color.as_ref() {
+                    output.push_str(&format!("Color: {}\n", color));
+                }
+                let text = record.text.as_deref().unwrap_or("(stored punches)");
+                output.push_str("Text:\n");
+                output.push_str(text);
+                output.push('\n');
+                output.push_str("Punches:\n");
+                output.push_str(&card.render(args.style.into()));
+            }
+            if let Some(path) = args.out {
+                write_output(&path, &output)?;
+                println!(
+                    "Wrote listing for {} to {}",
                     args.deck.display(),
                     path.display()
                 );
@@ -748,10 +926,23 @@ fn handle_verify(command: VerifyCommand) -> Result<()> {
             let expected = fs::read_to_string(&snapshot_path)
                 .with_context(|| format!("failed to read {}", snapshot_path.display()))?;
             let actual = read_text_arg(None, args.from.clone())?;
-            let diff = diff_text(&expected, &actual);
+            let (diff, changed) = diff_text(&expected, &actual, &args.mask);
             let diff_path = verify_diff_path(&args.deck);
             write_output(&diff_path, &diff)?;
-            println!("Verification diff written to {}", diff_path.display());
+            if args.strict && changed {
+                return Err(anyhow!(
+                    "verification failed; see diff at {}",
+                    diff_path.display()
+                ));
+            }
+            if changed {
+                println!("Verification diff written to {}", diff_path.display());
+            } else {
+                println!(
+                    "Verification passed with ignored masks; diff stored at {}",
+                    diff_path.display()
+                );
+            }
         }
         VerifyCommand::Report(args) => {
             let diff_path = verify_diff_path(&args.deck);
@@ -818,6 +1009,68 @@ fn parse_column_range(input: &str) -> Result<ColumnRange, String> {
     ColumnRange::new(start, end).map_err(|err| err.to_string())
 }
 
+fn parse_range_expression(expr: &str, deck_len: usize) -> Result<Vec<usize>> {
+    if expr.trim().is_empty() {
+        return Err(anyhow!("range expression cannot be empty"));
+    }
+    let mut indices: Vec<usize> = Vec::new();
+    for part in expr.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some((start_raw, end_raw)) = part.split_once("..") {
+            let start = parse_range_bound(start_raw.trim(), deck_len)?;
+            let end = parse_range_bound(end_raw.trim(), deck_len)?;
+            if start > end {
+                return Err(anyhow!("range {}..{} is invalid", start, end));
+            }
+            for value in start..=end {
+                indices.push(value - 1);
+            }
+        } else {
+            let value = parse_range_bound(part, deck_len)?;
+            indices.push(value - 1);
+        }
+    }
+    if indices.is_empty() {
+        return Err(anyhow!("no indices resolved from '{}'", expr));
+    }
+    let mut unique: Vec<usize> = Vec::new();
+    for idx in indices {
+        if idx >= deck_len {
+            return Err(anyhow!(
+                "card index {} out of range 1..{}",
+                idx + 1,
+                deck_len
+            ));
+        }
+        if !unique.contains(&idx) {
+            unique.push(idx);
+        }
+    }
+    Ok(unique)
+}
+
+fn parse_range_bound(token: &str, deck_len: usize) -> Result<usize> {
+    if token.is_empty() {
+        return Err(anyhow!("range bound cannot be empty"));
+    }
+    if token == "$" {
+        if deck_len == 0 {
+            return Err(anyhow!("deck is empty; '$' is undefined"));
+        }
+        return Ok(deck_len);
+    }
+    let value: usize = token
+        .parse()
+        .map_err(|_| anyhow!("range bound '{}' is not a number", token))?;
+    if value == 0 {
+        return Err(anyhow!("card indices are 1-based"));
+    }
+    Ok(value)
+}
+
 fn split_lines_fixed(input: &str) -> Vec<String> {
     let mut lines = Vec::new();
     for raw in input.lines() {
@@ -836,27 +1089,53 @@ fn split_lines_fixed(input: &str) -> Vec<String> {
     lines
 }
 
-fn diff_text(expected: &str, actual: &str) -> String {
-    let mut output = String::new();
+fn diff_text(expected: &str, actual: &str, mask: &[ColumnRange]) -> (String, bool) {
     let exp_lines: Vec<&str> = expected.lines().collect();
     let act_lines: Vec<&str> = actual.lines().collect();
     let max = exp_lines.len().max(act_lines.len());
+    let mut output = String::new();
+    let mut changed = false;
     for i in 0..max {
         let exp = exp_lines.get(i).copied().unwrap_or("");
         let act = act_lines.get(i).copied().unwrap_or("");
-        if exp != act {
-            output.push_str(&format!(
-                "line {:>4}: expected |{}| actual |{}|\n",
-                i + 1,
-                exp,
-                act
-            ));
+        if !lines_match_with_mask(exp, act, mask) {
+            changed = true;
+            output.push_str(&format!("line {:>4}:\n", i + 1));
+            output.push_str(&format!("  expected |{}|\n", exp));
+            output.push_str(&format!("  actual   |{}|\n", act));
         }
     }
-    if output.is_empty() {
+    if !changed {
         output.push_str("verification passed: no differences\n");
     }
-    output
+    (output, changed)
+}
+
+fn lines_match_with_mask(expected: &str, actual: &str, mask: &[ColumnRange]) -> bool {
+    if expected == actual && mask.is_empty() {
+        return true;
+    }
+    let mut exp_chars: Vec<char> = expected.chars().collect();
+    let mut act_chars: Vec<char> = actual.chars().collect();
+    let required_len = mask.iter().map(|r| r.end).max().unwrap_or(0);
+    while exp_chars.len() < required_len {
+        exp_chars.push(' ');
+    }
+    while act_chars.len() < required_len {
+        act_chars.push(' ');
+    }
+    for range in mask {
+        for col in range.start..=range.end {
+            let idx = col - 1;
+            if idx < exp_chars.len() {
+                exp_chars[idx] = '_';
+            }
+            if idx < act_chars.len() {
+                act_chars[idx] = '_';
+            }
+        }
+    }
+    exp_chars == act_chars
 }
 
 fn verify_snapshot_path(deck: &Path) -> PathBuf {

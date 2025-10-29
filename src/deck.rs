@@ -285,8 +285,10 @@ impl Deck {
         Ok(())
     }
 
-    pub fn append_card(&mut self, card: CardRecord) {
+    pub fn append_card(&mut self, card: CardRecord) -> Result<()> {
+        self.enforce_protection(None, &card)?;
         self.cards.push(card);
+        Ok(())
     }
 
     pub fn insert_card(&mut self, index: usize, card: CardRecord) -> Result<()> {
@@ -297,6 +299,7 @@ impl Deck {
                 self.cards.len()
             ));
         }
+        self.enforce_protection(None, &card)?;
         self.cards.insert(index, card);
         Ok(())
     }
@@ -309,6 +312,8 @@ impl Deck {
                 self.cards.len().saturating_sub(1)
             ));
         }
+        let original = &self.cards[index];
+        self.enforce_protection(Some(original), &card)?;
         self.cards[index] = card;
         Ok(())
     }
@@ -330,6 +335,21 @@ impl Deck {
         let mut value = start;
         for card in &mut self.cards {
             card.seq = Some(value);
+            if let Some(text) = card.text.as_mut() {
+                let mut chars: Vec<char> = text.chars().collect();
+                while chars.len() < MAX_COLS {
+                    chars.push(' ');
+                }
+                let seq_str = format!("{:>8}", value);
+                let start_idx = MAX_COLS.saturating_sub(seq_str.len());
+                for (offset, ch) in seq_str.chars().enumerate() {
+                    let idx = start_idx + offset;
+                    if idx < chars.len() {
+                        chars[idx] = ch;
+                    }
+                }
+                *text = chars.into_iter().collect();
+            }
             value += step;
         }
     }
@@ -381,6 +401,84 @@ impl Deck {
         }
         Ok(crate::punchcards::CardDeck { cards })
     }
+
+    pub fn merge_from(&mut self, other: &Deck) -> Result<()> {
+        if self.header.protected_cols != other.header.protected_cols {
+            return Err(anyhow!(
+                "protected columns mismatch between decks ({} vs {})",
+                format_ranges(&self.header.protected_cols),
+                format_ranges(&other.header.protected_cols)
+            ));
+        }
+        if self.header.template != other.header.template {
+            return Err(anyhow!("templates differ between decks"));
+        }
+        if self.header.language != other.header.language {
+            return Err(anyhow!("languages differ between decks"));
+        }
+        self.cards.extend(other.cards.clone());
+        self.header.history.extend_from_slice(&other.header.history);
+        Ok(())
+    }
+
+    pub fn slice_indices(&self, indices: &[usize]) -> Result<Self> {
+        let mut new = Self::new(self.header.clone());
+        for &idx in indices {
+            if idx >= self.cards.len() {
+                return Err(anyhow!(
+                    "card index {} out of range 0..{}",
+                    idx,
+                    self.cards.len().saturating_sub(1)
+                ));
+            }
+            new.cards.push(self.cards[idx].clone());
+        }
+        Ok(new)
+    }
+
+    fn enforce_protection(
+        &self,
+        original: Option<&CardRecord>,
+        updated: &CardRecord,
+    ) -> Result<()> {
+        if self.header.protected_cols.is_empty() {
+            return Ok(());
+        }
+        let new_text = updated
+            .text
+            .as_deref()
+            .ok_or_else(|| anyhow!("card without text cannot be checked for protection"))?;
+        let old_text = original.and_then(|c| c.text.as_deref());
+        for range in &self.header.protected_cols {
+            for col in range.start..=range.end {
+                let idx = col - 1;
+                let new_char = new_text
+                    .chars()
+                    .nth(idx)
+                    .ok_or_else(|| anyhow!("card text shorter than {} columns", col))?;
+                if let Some(old) = old_text {
+                    let old_char = old
+                        .chars()
+                        .nth(idx)
+                        .ok_or_else(|| anyhow!("card text shorter than {} columns", col))?;
+                    if new_char != old_char {
+                        return Err(anyhow!(
+                            "column {} is protected; attempted to change '{}' -> '{}'",
+                            col,
+                            old_char,
+                            new_char
+                        ));
+                    }
+                } else if new_char != ' ' {
+                    return Err(anyhow!(
+                        "column {} is protected; new cards must leave it blank",
+                        col
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -413,4 +511,15 @@ impl fmt::Display for EncodingKind {
             EncodingKind::Ebcdic => write!(f, "ebcdic"),
         }
     }
+}
+
+fn format_ranges(ranges: &[ColumnRange]) -> String {
+    if ranges.is_empty() {
+        return "-".to_string();
+    }
+    ranges
+        .iter()
+        .map(|r| format!("{}-{}", r.start, r.end))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
