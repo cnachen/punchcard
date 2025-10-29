@@ -18,7 +18,7 @@ impl PunchCard {
         }
     }
 
-    pub fn from_str<E: PunchEncoding>(enc: &E, s: &str) -> Result<Self, EncodeError> {
+    pub fn from_str<E: PunchEncoding + ?Sized>(enc: &E, s: &str) -> Result<Self, EncodeError> {
         let mut card = Self::new();
         card.raw_text = s.chars().take(COLS).collect();
         for (i, ch) in s.chars().take(COLS).enumerate() {

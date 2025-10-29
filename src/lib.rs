@@ -1,8 +1,14 @@
+mod deck;
 mod encoding;
 mod punchcards;
+mod templates;
 
+pub use deck::{
+    AuditEvent, CardMeta, CardRecord, CardType, ColumnRange, Deck, DeckHeader, EncodingKind,
+};
 pub use encoding::{Ibm029Encoder, PunchEncoding, ValidChar};
 pub use punchcards::{CardDeck, PunchCard, RenderStyle};
+pub use templates::{Template, TemplateRegistry};
 
 use anyhow::Result;
 
