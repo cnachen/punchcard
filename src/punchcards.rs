@@ -27,19 +27,31 @@ impl PunchCard {
         Ok(card)
     }
 
-    /// Write a sequence number in the lower-right corner (columns 72..80, a common practice).
-    /// Automatically truncated if it exceeds 9 digits.
-    pub fn with_sequence(mut self, seq: usize) -> Self {
+    /// Write a right-aligned sequence number into columns 72–80 (1-based) without clobbering data.
+    pub fn with_sequence<E: PunchEncoding>(
+        mut self,
+        enc: &E,
+        seq: usize,
+    ) -> Result<Self, EncodeError> {
         let seq_str = format!("{:>9}", seq);
-        // Place sequence number in columns 72..80 (indices 71..80) — a common deck convention, can be customized
         let start = COLS.saturating_sub(seq_str.len());
-        for (i, ch) in seq_str.chars().enumerate() {
-            // Unknown characters will result in blank punches
-            if let Ok(mask) = crate::encoding::Ibm029Encoder::new().encode_char(ch) {
-                self.cols[start + i] = mask;
-            }
+
+        let mut chars: Vec<char> = self.raw_text.chars().collect();
+        if chars.len() < COLS {
+            chars.resize(COLS, ' ');
         }
-        self
+
+        for (offset, ch) in seq_str.chars().enumerate() {
+            let idx = start + offset;
+            if chars[idx] != ' ' {
+                continue;
+            }
+            chars[idx] = ch;
+            self.cols[idx] = enc.encode_char(ch)?;
+        }
+
+        self.raw_text = chars.into_iter().collect();
+        Ok(self)
     }
 
     pub fn render(&self, style: RenderStyle) -> String {
@@ -50,26 +62,33 @@ impl PunchCard {
     }
 
     fn render_ascii(&self, mark: char, blank: char) -> String {
-        // Refer to README illustration: row order is 12, 11, 0..9, with a ruler line at the top
         let mut out = String::new();
-        let ruler =
-            ".........1.........2.........3.........4.........5.........6.........7.........8";
-        writeln!(&mut out, "IBM 5081 (80 cols) [{}]", "IBM029").ok();
-        writeln!(&mut out, "     {}", &ruler[..80]).ok();
-
-        write!(&mut out, "     ").ok();
-        for ch in self
-            .raw_text
-            .chars()
-            .chain(std::iter::repeat(' '))
-            .take(COLS)
-        {
-            out.push(ch);
+        let mut ruler = String::with_capacity(COLS);
+        for col in 1..=COLS {
+            if col % 10 == 0 {
+                let digit = ((col / 10) % 10) as u8;
+                ruler.push(char::from(b'0' + digit));
+            } else {
+                ruler.push('.');
+            }
         }
 
-        writeln!(&mut out, "").ok();
+        let separator = "-".repeat(COLS);
+        writeln!(&mut out, "IBM 5081 (80 cols) [{}]", "IBM029").ok();
+        writeln!(&mut out, "     {}", ruler).ok();
 
-        writeln!(&mut out, "     {}", "-".repeat(80)).ok();
+        write!(&mut out, "     ").ok();
+        let mut raw_chars = self.raw_text.chars();
+        for _ in 0..COLS {
+            if let Some(ch) = raw_chars.next() {
+                out.push(ch);
+            } else {
+                out.push(' ');
+            }
+        }
+        writeln!(&mut out).ok();
+
+        writeln!(&mut out, "     {}", separator).ok();
 
         // Row labels: 12/11/0..9
         let labels = [
@@ -88,7 +107,7 @@ impl PunchCard {
             }
             writeln!(&mut out, "|").ok();
         }
-        writeln!(&mut out, "     {}", "-".repeat(80)).ok();
+        writeln!(&mut out, "     {}", separator).ok();
         out
     }
 }
@@ -114,7 +133,7 @@ impl CardDeck {
                 if buf.chars().count() == 80 {
                     let mut card = PunchCard::from_str(enc, &buf)?;
                     if with_seq_numbers {
-                        card = card.with_sequence(seq);
+                        card = card.with_sequence(enc, seq)?;
                     }
                     cards.push(card);
                     seq += 1;
@@ -130,7 +149,7 @@ impl CardDeck {
                 }
                 let mut card = PunchCard::from_str(enc, &padded)?;
                 if with_seq_numbers {
-                    card = card.with_sequence(seq);
+                    card = card.with_sequence(enc, seq)?;
                 }
                 cards.push(card);
                 seq += 1;
@@ -138,7 +157,7 @@ impl CardDeck {
                 // Empty line → one blank card
                 let mut card = PunchCard::from_str(enc, &" ".repeat(80))?;
                 if with_seq_numbers {
-                    card = card.with_sequence(seq);
+                    card = card.with_sequence(enc, seq)?;
                 }
                 cards.push(card);
                 seq += 1;
@@ -148,7 +167,7 @@ impl CardDeck {
             // No lines in input → produce one blank card
             let mut card = PunchCard::from_str(enc, &" ".repeat(80))?;
             if with_seq_numbers {
-                card = card.with_sequence(1);
+                card = card.with_sequence(enc, 1)?;
             }
             cards.push(card);
         }
@@ -161,7 +180,7 @@ impl CardDeck {
             if i > 0 {
                 s.push_str("\n");
             }
-            s.push_str(&c.render(style.clone()));
+            s.push_str(&c.render(style));
         }
         s
     }
